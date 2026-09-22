@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Phương Chi + Thái Duy ❤️</title>
+<style>
+* { box-sizing: border-box; }
+html, body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    font-family: Arial, Helvetica, sans-serif;
+    background: #111;
+}
+body {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+#gameWrap {
+    position: relative;
+    width: min(100vw, 1000px);
+    height: min(100vh, 700px);
+    aspect-ratio: 10 / 7;
+}
+canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+    background: #91d8f5;
+    cursor: pointer;
+}
+#fileInput {
+    display: none;
+}
+</style>
+</head>
+<body>
+<div id="gameWrap">
+    <canvas id="game" width="1000" height="700"></canvas>
+</div>
+
+<script>
+/*
+============================================================
+PHƯƠNG CHI + THÁI DUY — WEB GAME
+Không cần server, không cần thư viện ngoài.
+Có thể mở index.html trực tiếp hoặc upload cả thư mục lên web hosting.
+
+Thay tài nguyên:
+assets/bird.png       = ảnh Phương Chi
+assets/pipe.png       = ảnh cột
+assets/life.png       = ảnh 1 mạng
+assets/win.png        = ảnh màn hình thắng
+assets/bgm.mp3        = nhạc lúc chơi
+assets/win_music.mp3  = nhạc lúc thắng
+
+Nếu không có ảnh/nhạc, game tự dùng hình khối và không bị crash.
+============================================================
+*/
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+
+const W = canvas.width;
+const H = canvas.height;
+
+const GAME_TIME = 20;
+const GROUND_H = 55;
+
+let state = "PLAYING"; // PLAYING | PAUSED | WIN
+let lives = 3;
+let elapsed = 0;
+let lastTime = performance.now();
+
+const bird = {
+    x: 190,
+    y: 330,
+    r: 25,
+    vy: 0
+};
+
+const physics = {
+    gravity: 1050,
+    flap: -390,
+    pipeSpeed: 280,
+    pipeWidth: 82,
+    gap: 175
+};
+
+let pipes = [];
+let pipeTimer = 0;
+
+const assets = {
+    bird: new Image(),
+    pipe: new Image(),
+    life: new Image(),
+    win: new Image()
+};
+
+const loaded = {
+    bird: false,
+    pipe: false,
+    life: false,
+    win: false
+};
+
+function loadImage(key, src) {
+    assets[key].src = src;
+    assets[key].onload = () => loaded[key] = true;
+    assets[key].onerror = () => loaded[key] = false;
+}
+
+loadImage("bird", "assets/bird.png");
+loadImage("pipe", "assets/pipe.png");
+loadImage("life", "assets/life.png");
+loadImage("win", "assets/win.png");
+
+let bgm = new Audio("assets/bgm.mp3");
+let winMusic = new Audio("assets/win_music.mp3");
+
+bgm.loop = true;
+winMusic.loop = true;
+bgm.volume = 0.55;
+winMusic.volume = 0.70;
+
+let audioStarted = false;
+
+function startGameMusic() {
+    if (!audioStarted) {
+        audioStarted = true;
+    }
+    bgm.play().catch(() => {});
+}
+
+function stopGameMusic() {
+    bgm.pause();
+    bgm.currentTime = 0;
+}
+
+function startWinMusic() {
+    winMusic.currentTime = 0;
+    winMusic.play().catch(() => {});
+}
+
+function stopWinMusic() {
+    winMusic.pause();
+    winMusic.currentTime = 0;
+}
+
+function resetGame() {
+    state = "PLAYING";
+    lives = 3;
+    elapsed = 0;
+    bird.x = 190;
+    bird.y = 330;
+    bird.vy = 0;
+    pipes = [];
+    pipeTimer = 0;
+    stopWinMusic();
+    startGameMusic();
+}
+
+function spawnPipe() {
+    pipes.push({
+        x: W + 40,
+        gapY: 190 + Math.random() * 300,
+        passed: false
+    });
+}
+
+function flap() {
+    if (state === "PLAYING") {
+        bird.vy = physics.flap;
+        startGameMusic();
+    }
+}
+
+function loseLife() {
+    lives--;
+
+    if (lives <= 0) {
+        resetGame();
+        return;
+    }
+
+    bird.x = 190;
+    bird.y = 330;
+    bird.vy = 0;
+    pipes = [];
+    pipeTimer = 0;
+}
+
+function winGame() {
+    if (state === "WIN") return;
+    state = "WIN";
+    stopGameMusic();
+    startWinMusic();
+}
+
+function rectsIntersect(a, b) {
+    return a.x < b.x + b.w &&
+           a.x + a.w > b.x &&
+           a.y < b.y + b.h &&
+           a.y + a.h > b.y;
+}
+
+function update(dt) {
+    if (state !== "PLAYING") return;
+
+    elapsed += dt;
+
+    if (elapsed >= GAME_TIME) {
+        winGame();
+        return;
+    }
+
+    bird.vy += physics.gravity * dt;
+    bird.y += bird.vy * dt;
+
+    pipeTimer += dt;
+    if (pipeTimer >= 1.65) {
+        pipeTimer = 0;
+        spawnPipe();
+    }
+
+    for (const p of pipes) {
+        p.x -= physics.pipeSpeed * dt;
+    }
+
+    pipes = pipes.filter(p => p.x > -150);
+
+    const birdRect = {
+        x: bird.x - 21,
+        y: bird.y - 21,
+        w: 42,
+        h: 42
+    };
+
+    let collision = false;
+
+    if (bird.y - bird.r < 75 || bird.y + bird.r > H - GROUND_H) {
+        collision = true;
+    }
+
+    for (const p of pipes) {
+        const topH = p.gapY - physics.gap / 2;
+        const bottomY = p.gapY + physics.gap / 2;
+
+        const topRect = {
+            x: p.x,
+            y: 0,
+            w: physics.pipeWidth,
+            h: topH
+        };
+
+        const bottomRect = {
+            x: p.x,
+            y: bottomY,
+            w: physics.pipeWidth,
+            h: H - GROUND_H - bottomY
+        };
+
+        if (rectsIntersect(birdRect, topRect) ||
+            rectsIntersect(birdRect, bottomRect)) {
+            collision = true;
+            break;
+        }
+    }
+
+    if (collision) {
+        loseLife();
+    }
+}
+
+function roundedRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, r);
+}
+
+function drawBackground() {
+    const gradient = ctx.createLinearGradient(0, 0, 0, H);
+    gradient.addColorStop(0, "#83d8f4");
+    gradient.addColorStop(1, "#d8f5ff");
+
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, W, H);
+
+    // clouds
+    ctx.fillStyle = "rgba(255,255,255,0.72)";
+    drawCloud(140, 135, 1);
+    drawCloud(760, 180, 0.8);
+    drawCloud(520, 75, 0.55);
+
+    // ground
+    ctx.fillStyle = "#73bd5b";
+    ctx.fillRect(0, H - GROUND_H, W, GROUND_H);
+
+    ctx.fillStyle = "#54a943";
+    ctx.fillRect(0, H - GROUND_H, W, 8);
+}
+
+function drawCloud(x, y, s) {
+    ctx.beginPath();
+    ctx.arc(x, y, 28*s, 0, Math.PI*2);
+    ctx.arc(x+30*s, y-12*s, 35*s, 0, Math.PI*2);
+    ctx.arc(x+68*s, y, 27*s, 0, Math.PI*2);
+    ctx.fill();
+}
+
+function drawPipes() {
+    for (const p of pipes) {
+        const topH = p.gapY - physics.gap / 2;
+        const bottomY = p.gapY + physics.gap / 2;
+        const bottomH = H - GROUND_H - bottomY;
+
+        if (loaded.pipe) {
+            drawPipeImage(p.x, 0, physics.pipeWidth, topH);
+            drawPipeImage(p.x, bottomY, physics.pipeWidth, bottomH);
+        } else {
+            drawPipeBlock(p.x, 0, physics.pipeWidth, topH);
+            drawPipeBlock(p.x, bottomY, physics.pipeWidth, bottomH);
+        }
+    }
+}
+
+function drawPipeImage(x, y, w, h) {
+    if (h <= 0) return;
+    ctx.drawImage(assets.pipe, x, y, w, h);
+}
+
+function drawPipeBlock(x, y, w, h) {
+    if (h <= 0) return;
+
+    ctx.fillStyle = "#49ad55";
+    ctx.fillRect(x, y, w, h);
+
+    ctx.fillStyle = "#348c42";
+    ctx.fillRect(x, y, 8, h);
+
+    ctx.fillStyle = "#7bd46f";
+    ctx.fillRect(x + w - 13, y, 13, h);
+
+    // cap
+    const capH = 13;
+    if (y > 0) {
+        ctx.fillStyle = "#3f9f4c";
+        ctx.fillRect(x - 7, y, w + 14, capH);
+    } else {
+        ctx.fillStyle = "#3f9f4c";
+        ctx.fillRect(x - 7, h - capH, w + 14, capH);
+    }
+}
+
+function drawBird() {
+    if (loaded.bird) {
+        const size = 54;
+        ctx.save();
+        ctx.translate(bird.x, bird.y);
+        const angle = Math.max(-0.5, Math.min(0.8, bird.vy / 700));
+        ctx.rotate(angle);
+        ctx.drawImage(assets.bird, -size/2, -size/2, size, size);
+        ctx.restore();
+    } else {
+        ctx.fillStyle = "#ffd84d";
+        ctx.beginPath();
+        ctx.arc(bird.x, bird.y, bird.r, 0, Math.PI*2);
+        ctx.fill();
+
+        ctx.fillStyle = "#fff";
+        ctx.beginPath();
+        ctx.arc(bird.x+9, bird.y-8, 7, 0, Math.PI*2);
+        ctx.fill();
+
+        ctx.fillStyle = "#111";
+        ctx.beginPath();
+        ctx.arc(bird.x+11, bird.y-8, 3, 0, Math.PI*2);
+        ctx.fill();
+
+        ctx.fillStyle = "#f07d38";
+        ctx.beginPath();
+        ctx.moveTo(bird.x+21, bird.y);
+        ctx.lineTo(bird.x+38, bird.y+5);
+        ctx.lineTo(bird.x+21, bird.y+10);
+        ctx.closePath();
+        ctx.fill();
+    }
+}
+
+function drawHUD() {
+    ctx.fillStyle = "#111";
+    ctx.font = "bold 25px Arial";
+    ctx.fillText("Thời gian: " + Math.max(0, Math.ceil(GAME_TIME - elapsed)) + "s", 25, 35);
+
+    ctx.font = "bold 22px Arial";
+    ctx.fillText("Mạng:", 25, 68);
+
+    for (let i = 0; i < 3; i++) {
+        const x = 105 + i * 50;
+
+        if (loaded.life) {
+            ctx.globalAlpha = i < lives ? 1 : 0.25;
+            ctx.drawImage(assets.life, x, 40, 35, 35);
+            ctx.globalAlpha = 1;
+        } else {
+            ctx.fillStyle = i < lives ? "#ff5f8f" : "#999";
+            roundedRect(x, 42, 35, 30, 8);
+            ctx.fill();
+        }
+    }
+
+    // Pause
+    ctx.fillStyle = "rgba(255,255,255,0.92)";
+    roundedRect(850, 20, 125, 50, 12);
+    ctx.fill();
+
+    ctx.strokeStyle = "#111";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.fillStyle = "#111";
+    ctx.font = "bold 18px Arial";
+    ctx.textAlign = "center";
+    ctx.fillText("TẠM DỪNG", 912, 51);
+    ctx.textAlign = "left";
+}
+
+function drawPauseScreen() {
+    ctx.fillStyle = "rgba(0,0,0,0.58)";
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.textAlign = "center";
+
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 43px Arial";
+    ctx.fillText("Phương Chi + Thái Duy = ??", W/2, 300);
+
+    ctx.font = "22px Arial";
+    ctx.fillText("Câu trả lời duy nhất:", W/2, 365);
+
+    ctx.fillStyle = "#ff6ba4";
+    roundedRect(300, 420, 400, 100, 20);
+    ctx.fill();
+
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 29px Arial";
+    ctx.fillText("vô cực - yêu cực", W/2, 480);
+
+    ctx.font = "17px Arial";
+    ctx.fillText("Bấm vào đáp án để tiếp tục...", W/2, 555);
+
+    ctx.textAlign = "left";
+}
+
+function drawWinScreen() {
+    ctx.fillStyle = "rgba(255,255,255,0.96)";
+    ctx.fillRect(0, 0, W, H);
+
+    if (loaded.win) {
+        const maxW = 760;
+        const maxH = 440;
+        const scale = Math.min(
+            maxW / assets.win.width,
+            maxH / assets.win.height
+        );
+
+        const w = assets.win.width * scale;
+        const h = assets.win.height * scale;
+
+        ctx.drawImage(assets.win, W/2 - w/2, 80, w, h);
+    } else {
+        ctx.textAlign = "center";
+
+        ctx.fillStyle = "#ec5d9c";
+        ctx.font = "bold 49px Arial";
+        ctx.fillText("e chơi giỏi lắm a yêu em", W/2, 280);
+
+        ctx.font = "32px Arial";
+        ctx.fillText("❤️  WIN  ❤️", W/2, 350);
+
+        ctx.textAlign = "left";
+    }
+
+    ctx.fillStyle = "#59b875";
+    roundedRect(350, 575, 300, 70, 18);
+    ctx.fill();
+
+    ctx.strokeStyle = "#111";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 24px Arial";
+    ctx.fillText("QUAY LẠI / CHƠI LẠI", W/2, 619);
+    ctx.textAlign = "left";
+}
+
+function draw() {
+    drawBackground();
+
+    if (state === "PLAYING" || state === "PAUSED") {
+        drawPipes();
+        drawBird();
+        drawHUD();
+
+        if (state === "PAUSED") {
+            drawPauseScreen();
+        }
+    } else if (state === "WIN") {
+        drawWinScreen();
+    }
+}
+
+function gameLoop(now) {
+    let dt = (now - lastTime) / 1000;
+    lastTime = now;
+
+    if (dt > 0.05) dt = 0.05;
+
+    update(dt);
+    draw();
+
+    requestAnimationFrame(gameLoop);
+}
+
+function canvasPoint(e) {
+    const rect = canvas.getBoundingClientRect();
+    return {
+        x: (e.clientX - rect.left) * W / rect.width,
+        y: (e.clientY - rect.top) * H / rect.height
+    };
+}
+
+canvas.addEventListener("mousedown", (e) => {
+    const p = canvasPoint(e);
+
+    if (state === "PLAYING") {
+        // Pause button
+        if (p.x >= 850 && p.x <= 975 && p.y >= 20 && p.y <= 70) {
+            state = "PAUSED";
+            bgm.pause();
+            return;
+        }
+
+        flap();
+    } else if (state === "PAUSED") {
+        // Only answer button
+        if (p.x >= 300 && p.x <= 700 && p.y >= 420 && p.y <= 520) {
+            winGame();
+        }
+    } else if (state === "WIN") {
+        // Replay
+        if (p.x >= 350 && p.x <= 650 && p.y >= 575 && p.y <= 645) {
+            resetGame();
+        }
+    }
+});
+
+document.addEventListener("keydown", (e) => {
+    if (e.code === "Space") {
+        e.preventDefault();
+        flap();
+    }
+
+    if (e.code === "Escape") {
+        if (state === "PLAYING") {
+            state = "PAUSED";
+            bgm.pause();
+        } else if (state === "PAUSED") {
+            state = "PLAYING";
+            startGameMusic();
+        }
+    }
+});
+
+// Mobile touch
+canvas.addEventListener("touchstart", (e) => {
+    e.preventDefault();
+    const touch = e.changedTouches[0];
+    const rect = canvas.getBoundingClientRect();
+    const p = {
+        x: (touch.clientX - rect.left) * W / rect.width,
+        y: (touch.clientY - rect.top) * H / rect.height
+    };
+
+    if (state === "PLAYING") {
+        if (p.x >= 850 && p.x <= 975 && p.y >= 20 && p.y <= 70) {
+            state = "PAUSED";
+            bgm.pause();
+        } else {
+            flap();
+        }
+    } else if (state === "PAUSED") {
+        if (p.x >= 300 && p.x <= 700 && p.y >= 420 && p.y <= 520) {
+            winGame();
+        }
+    } else if (state === "WIN") {
+        if (p.x >= 350 && p.x <= 650 && p.y >= 575 && p.y <= 645) {
+            resetGame();
+        }
+    }
+}, {passive:false});
+
+// Draw once immediately and start loop.
+resetGame();
+requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>

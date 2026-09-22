@@ -1,0 +1,7 @@
+Đặt 6 file sau vào thư mục này:
+bird.png
+pipe.png
+life.png
+win.png
+bgm.mp3
+win_music.mp3
